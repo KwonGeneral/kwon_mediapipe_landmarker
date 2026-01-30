@@ -1,0 +1,22 @@
+# Files to exclude from pub.dev package
+
+# Development files
+CLAUDE_CODE_CONTEXT.md
+*.log
+
+# MediaPipe model files (users should download separately)
+*.task
+*.tflite
+
+# Example app model files
+example/ios/*.task
+example/android/app/src/main/assets/*.task
+
+# Build outputs
+example/build/
+example/.dart_tool/
+
+# IDE files
+.idea/
+.vscode/
+*.iml
