@@ -2,6 +2,7 @@ package com.kwon.mediapipe_landmarker
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.util.Log
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.core.Delegate
@@ -12,21 +13,28 @@ import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarkerResult
 /**
  * Pose Landmarker Helper
  * MediaPipe Pose Landmarker 래퍼 클래스
- *
- * 33개 몸 랜드마크 (visibility + presence) 지원
+ * 
+ * 33개 신체 랜드마크 감지:
+ * - 얼굴 (0-10): nose, eyes, ears, mouth
+ * - 상체 (11-22): shoulders, elbows, wrists, fingers
+ * - 하체 (23-32): hips, knees, ankles, heels, feet
  */
 class PoseLandmarkerHelper(
     private val context: Context,
     private val numPoses: Int = 1,
     private val minDetectionConfidence: Float = 0.5f,
     private val minTrackingConfidence: Float = 0.5f,
-    private val runningMode: RunningMode = RunningMode.IMAGE
+    private val minPosePresenceConfidence: Float = 0.5f,
+    private val runningMode: RunningMode = RunningMode.VIDEO,
+    private val useGpu: Boolean = false
 ) {
-    private var poseLandmarker: PoseLandmarker? = null
-
     companion object {
-        private const val MODEL_POSE_LANDMARKER = "pose_landmarker_lite.task"
+        private const val TAG = "PoseLandmarkerHelper"
+        private const val MODEL_NAME = "pose_landmarker_lite.task"
+        // 모델 옵션: pose_landmarker_lite.task, pose_landmarker_full.task, pose_landmarker_heavy.task
     }
+
+    private var poseLandmarker: PoseLandmarker? = null
 
     init {
         setupPoseLandmarker()
@@ -34,117 +42,116 @@ class PoseLandmarkerHelper(
 
     private fun setupPoseLandmarker() {
         try {
-            val baseOptions = BaseOptions.builder()
-                .setModelAssetPath(MODEL_POSE_LANDMARKER)
-                .setDelegate(Delegate.CPU)
-                .build()
+            val baseOptionsBuilder = BaseOptions.builder()
+                .setModelAssetPath(MODEL_NAME)
 
-            val options = PoseLandmarker.PoseLandmarkerOptions.builder()
+            // GPU 사용 여부 (주의: 일부 기기에서 불안정)
+            if (useGpu) {
+                baseOptionsBuilder.setDelegate(Delegate.GPU)
+            } else {
+                baseOptionsBuilder.setDelegate(Delegate.CPU)
+            }
+
+            val baseOptions = baseOptionsBuilder.build()
+
+            val optionsBuilder = PoseLandmarker.PoseLandmarkerOptions.builder()
                 .setBaseOptions(baseOptions)
-                .setRunningMode(runningMode)
                 .setNumPoses(numPoses)
                 .setMinPoseDetectionConfidence(minDetectionConfidence)
                 .setMinTrackingConfidence(minTrackingConfidence)
-                .setMinPosePresenceConfidence(minDetectionConfidence)
-                .setOutputSegmentationMasks(false)
-                .build()
+                .setMinPosePresenceConfidence(minPosePresenceConfidence)
+                .setRunningMode(runningMode)
+                .setOutputSegmentationMasks(false)  // 세그멘테이션 마스크 불필요
 
+            val options = optionsBuilder.build()
             poseLandmarker = PoseLandmarker.createFromOptions(context, options)
+            
+            Log.d(TAG, "PoseLandmarker initialized successfully")
         } catch (e: Exception) {
-            throw RuntimeException("Failed to initialize Pose Landmarker: ${e.message}", e)
+            Log.e(TAG, "Failed to initialize PoseLandmarker", e)
+            throw e
         }
     }
 
     /**
-     * 이미지에서 포즈 감지
-     * @param bitmap 입력 이미지
-     * @param timestampMs 타임스탬프 (밀리초)
-     * @return 감지 결과 Map (Flutter로 전송용)
+     * Bitmap에서 포즈 감지 (VIDEO 모드)
+     * @return Map 형태의 결과 (Flutter로 전달용)
      */
-    fun detect(bitmap: Bitmap, timestampMs: Long): Map<String, Any>? {
+    fun detect(bitmap: Bitmap, timestampMs: Long): Map<String, Any?>? {
         val landmarker = poseLandmarker ?: return null
 
-        try {
+        return try {
             val mpImage = BitmapImageBuilder(bitmap).build()
-            val result = landmarker.detect(mpImage)
+            
+            val result: PoseLandmarkerResult = when (runningMode) {
+                RunningMode.VIDEO -> landmarker.detectForVideo(mpImage, timestampMs)
+                RunningMode.IMAGE -> landmarker.detect(mpImage)
+                else -> return null
+            }
 
-            return convertResultToMap(result)
+            convertResultToMap(result)
         } catch (e: Exception) {
-            e.printStackTrace()
-            return null
+            Log.e(TAG, "Detection failed", e)
+            null
         }
     }
 
     /**
-     * PoseLandmarkerResult를 Flutter 전송용 Map으로 변환
+     * PoseLandmarkerResult를 Flutter 전달용 Map으로 변환
      */
-    private fun convertResultToMap(result: PoseLandmarkerResult): Map<String, Any>? {
+    private fun convertResultToMap(result: PoseLandmarkerResult): Map<String, Any?>? {
         if (result.landmarks().isEmpty()) {
             return null
         }
 
-        // 첫 번째 포즈만 처리 (numPoses=1 기준)
-        val poseLandmarks = result.landmarks()[0]
+        // 첫 번째 포즈만 사용 (numPoses=1인 경우)
+        val landmarks = result.landmarks()[0]
+        val worldLandmarks = if (result.worldLandmarks().isNotEmpty()) {
+            result.worldLandmarks()[0]
+        } else null
 
-        // 정규화된 랜드마크 (이미지 좌표계)
-        val landmarks = mutableListOf<Map<String, Any>>()
-        poseLandmarks.forEachIndexed { index, landmark ->
-            val landmarkMap = mutableMapOf<String, Any>(
+        Log.d(TAG, "Pose detected! landmarks=${landmarks.size}")
+
+        // Normalized landmarks (0.0~1.0)
+        val landmarksList = landmarks.mapIndexed { index, landmark ->
+            hashMapOf(
                 "index" to index,
                 "x" to landmark.x(),
                 "y" to landmark.y(),
-                "z" to landmark.z()
+                "z" to landmark.z(),
+                "visibility" to (landmark.visibility().orElse(0f)),
+                "presence" to (landmark.presence().orElse(0f))
             )
-
-            // visibility와 presence 추가 (있으면)
-            if (landmark.visibility().isPresent) {
-                landmarkMap["visibility"] = landmark.visibility().get().toDouble()
-            }
-            if (landmark.presence().isPresent) {
-                landmarkMap["presence"] = landmark.presence().get().toDouble()
-            }
-
-            landmarks.add(landmarkMap)
         }
 
-        val resultMap = mutableMapOf<String, Any>(
-            "landmarks" to landmarks
+        // World landmarks (미터 단위)
+        val worldLandmarksList = worldLandmarks?.mapIndexed { index, landmark ->
+            hashMapOf(
+                "index" to index,
+                "x" to landmark.x(),
+                "y" to landmark.y(),
+                "z" to landmark.z(),
+                "visibility" to (landmark.visibility().orElse(0f)),
+                "presence" to (landmark.presence().orElse(0f))
+            )
+        }
+
+        return hashMapOf(
+            "landmarks" to landmarksList,
+            "worldLandmarks" to worldLandmarksList
         )
-
-        // 월드 랜드마크 (실제 3D 좌표, 미터 단위)
-        if (result.worldLandmarks().isNotEmpty()) {
-            val worldLandmarksList = result.worldLandmarks()[0]
-            val worldLandmarks = mutableListOf<Map<String, Any>>()
-
-            worldLandmarksList.forEachIndexed { index, landmark ->
-                val landmarkMap = mutableMapOf<String, Any>(
-                    "index" to index,
-                    "x" to landmark.x(),
-                    "y" to landmark.y(),
-                    "z" to landmark.z()
-                )
-
-                if (landmark.visibility().isPresent) {
-                    landmarkMap["visibility"] = landmark.visibility().get().toDouble()
-                }
-                if (landmark.presence().isPresent) {
-                    landmarkMap["presence"] = landmark.presence().get().toDouble()
-                }
-
-                worldLandmarks.add(landmarkMap)
-            }
-
-            resultMap["worldLandmarks"] = worldLandmarks
-        }
-
-        return resultMap
     }
 
     /**
      * 리소스 해제
      */
     fun close() {
-        poseLandmarker?.close()
-        poseLandmarker = null
+        try {
+            poseLandmarker?.close()
+            poseLandmarker = null
+            Log.d(TAG, "PoseLandmarker closed")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error closing PoseLandmarker", e)
+        }
     }
 }

@@ -33,13 +33,17 @@ class CameraPage extends StatefulWidget {
 
 class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   CameraController? _cameraController;
-  bool _isCameraReady = false;      // 카메라 준비 상태
-  bool _isMediaPipeReady = false;   // MediaPipe 준비 상태
+  bool _isCameraReady = false;
+  bool _isMediaPipeReady = false;
   bool _isDetecting = false;
-  bool _isDisposed = false;         // Widget dispose 상태
+  bool _isDisposed = false;
   
-  // 비동기 처리 핵심: 현재 처리 중인지 플래그
+  // 비동기 처리
   bool _isProcessingFrame = false;
+  
+  // 감지 모드
+  bool _faceEnabled = true;
+  bool _poseEnabled = true;  // Pose도 활성화
   
   // Results
   LandmarkerResult? _lastResult;
@@ -66,16 +70,13 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _addLog('AppLifecycleState: $state');
     
-    // 앱이 백그라운드로 갈 때 카메라 정리
     if (state == AppLifecycleState.inactive || 
         state == AppLifecycleState.paused) {
       _pauseCamera();
     }
-    // 앱이 포그라운드로 돌아올 때 카메라 재초기화
     else if (state == AppLifecycleState.resumed) {
       _resumeCamera();
     }
-    // 앱 완전 종료 시
     else if (state == AppLifecycleState.detached) {
       _cleanupAll();
     }
@@ -85,13 +86,10 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     if (_isDisposed) return;
     
     _addLog('Pausing camera...');
-    
-    // 1. 상태 업데이트 먼저
     _isDetecting = false;
     _isProcessingFrame = true;
-    _isCameraReady = false;  // 중요: 카메라 준비 상태 false로!
+    _isCameraReady = false;
     
-    // 2. 컨트롤러 정리
     final controller = _cameraController;
     _cameraController = null;
     
@@ -102,7 +100,6 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
         }
       } catch (_) {}
       
-      // dispose는 비동기로 처리
       Future.microtask(() {
         try {
           controller.dispose();
@@ -113,17 +110,15 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
       });
     }
     
-    // UI 업데이트
     if (mounted) setState(() {});
   }
 
   void _resumeCamera() {
     if (_isDisposed) return;
-    if (_isCameraReady) return;  // 이미 준비되어 있으면 스킵
+    if (_isCameraReady) return;
     
     _addLog('Resuming camera...');
     
-    // 카메라 재초기화 (약간의 딜레이 후)
     Future.delayed(const Duration(milliseconds: 100), () {
       if (!_isDisposed && mounted) {
         _isProcessingFrame = false;
@@ -188,19 +183,24 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     await _initializeCamera();
     if (!_isCameraReady) return;
     
-    // 3. Initialize MediaPipe (한 번만)
+    // 3. Initialize MediaPipe (Face + Pose)
     if (!_isMediaPipeReady) {
-      _addLog('Initializing MediaPipe...');
+      _addLog('Initializing MediaPipe (Face: $_faceEnabled, Pose: $_poseEnabled)...');
       try {
         await KwonMediapipeLandmarker.initialize(
-          face: true,
-          pose: false,
+          face: _faceEnabled,
+          pose: _poseEnabled,
           faceOptions: const FaceOptions(
             numFaces: 1,
             minDetectionConfidence: 0.5,
             minTrackingConfidence: 0.5,
             outputBlendshapes: true,
             outputTransformationMatrix: false,
+          ),
+          poseOptions: const PoseOptions(
+            numPoses: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5,
           ),
         );
         _isMediaPipeReady = true;
@@ -219,7 +219,6 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     
     _addLog('Initializing camera...');
     
-    // 기존 컨트롤러가 있으면 정리
     if (_cameraController != null) {
       try {
         await _cameraController!.dispose();
@@ -227,7 +226,6 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
       _cameraController = null;
     }
     
-    // 1. Get cameras
     final cameras = await availableCameras();
     if (cameras.isEmpty) {
       _addLog('ERROR: No cameras available');
@@ -235,14 +233,12 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     }
     _addLog('Found ${cameras.length} cameras');
     
-    // 2. Select front camera
     final frontCamera = cameras.firstWhere(
       (c) => c.lensDirection == CameraLensDirection.front,
       orElse: () => cameras.first,
     );
     _addLog('Using camera: ${frontCamera.name}, direction: ${frontCamera.lensDirection}');
     
-    // 3. Create new camera controller
     final controller = CameraController(
       frontCamera,
       ResolutionPreset.medium,
@@ -253,7 +249,6 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     try {
       await controller.initialize();
       
-      // dispose 체크
       if (_isDisposed) {
         controller.dispose();
         return;
@@ -283,7 +278,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
       return;
     }
     
-    _addLog('Starting detection...');
+    _addLog('Starting detection (Face: $_faceEnabled, Pose: $_poseEnabled)...');
     _frameCount = 0;
     _processedFrames = 0;
     _detectedFrames = 0;
@@ -307,22 +302,17 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     });
   }
 
-  /// 카메라 프레임 콜백 - 비동기 처리의 핵심!
   void _onCameraFrame(CameraImage image) {
-    // dispose 후에는 처리 안함
     if (_isDisposed || !mounted) return;
     
     _frameCount++;
     
-    // 핵심: 이전 프레임 처리 중이면 스킵!
     if (_isProcessingFrame) {
       return;
     }
     
-    // 처리 시작
     _isProcessingFrame = true;
     
-    // 비동기로 처리 (await 없이!)
     _processFrame(image).then((_) {
       if (!_isDisposed) _isProcessingFrame = false;
     }).catchError((e) {
@@ -343,11 +333,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     
     // 30프레임마다 로그
     if (_processedFrames % 30 == 1) {
-      _addLog('Processing frame #$_processedFrames, format: ${image.format.group}, planes: ${image.planes.length}');
-      _addLog('Image size: ${image.width}x${image.height}');
-      for (int i = 0; i < image.planes.length; i++) {
-        _addLog('Plane $i: bytes=${image.planes[i].bytes.length}, bytesPerRow=${image.planes[i].bytesPerRow}');
-      }
+      _addLog('Processing frame #$_processedFrames');
     }
     
     try {
@@ -360,15 +346,19 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
         bytesPerRow: image.planes.map((p) => p.bytesPerRow).toList(),
       );
       
-      // dispose 후에는 결과 처리 안함
       if (_isDisposed || !mounted) return;
       
-      if (result != null && result.hasFace) {
+      if (result != null && (result.hasFace || result.hasPose)) {
         _detectedFrames++;
         
         // 30프레임마다 로그
         if (_detectedFrames % 30 == 1) {
-          _addLog('Face DETECTED! Landmarks: ${result.face!.landmarks.length}');
+          if (result.hasFace) {
+            _addLog('Face DETECTED! Landmarks: ${result.face!.landmarks.length}');
+          }
+          if (result.hasPose) {
+            _addLog('Pose DETECTED! Landmarks: ${result.pose!.landmarks.length}');
+          }
         }
         
         // FPS 계산
@@ -398,8 +388,36 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('MediaPipe Face Landmarker'),
+        title: const Text('MediaPipe Landmarker'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        actions: [
+          // Face 토글
+          IconButton(
+            icon: Icon(
+              Icons.face,
+              color: _faceEnabled ? Colors.blue : Colors.grey,
+            ),
+            onPressed: _isDetecting ? null : () {
+              setState(() {
+                _faceEnabled = !_faceEnabled;
+              });
+            },
+            tooltip: 'Face Detection',
+          ),
+          // Pose 토글
+          IconButton(
+            icon: Icon(
+              Icons.accessibility,
+              color: _poseEnabled ? Colors.green : Colors.grey,
+            ),
+            onPressed: _isDetecting ? null : () {
+              setState(() {
+                _poseEnabled = !_poseEnabled;
+              });
+            },
+            tooltip: 'Pose Detection',
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -427,7 +445,6 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   }
 
   Widget _buildCameraPreview() {
-    // 1. 카메라 준비 안됨
     if (!_isCameraReady) {
       return const Center(
         child: Column(
@@ -441,9 +458,8 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
       );
     }
     
-    // 2. 컨트롤러 없음
     final controller = _cameraController;
-    if (controller == null) {
+    if (controller == null || !controller.value.isInitialized) {
       return const Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -456,21 +472,6 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
       );
     }
     
-    // 3. 컨트롤러 초기화 안됨
-    if (!controller.value.isInitialized) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text('카메라 시작 중...'),
-          ],
-        ),
-      );
-    }
-    
-    // 4. 정상 - 카메라 프리뷰 표시
     return Container(
       color: Colors.black,
       child: Center(
@@ -495,25 +496,73 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     return Container(
       padding: const EdgeInsets.all(8),
       color: Colors.grey[200],
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Detection Results',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 4),
-          Text('Total frames: $_frameCount | Processed: $_processedFrames | Detected: $_detectedFrames'),
-          Text('FPS: ${_fps.toStringAsFixed(1)} | Skip rate: ${_frameCount > 0 ? (100 * (_frameCount - _processedFrames) / _frameCount).toStringAsFixed(1) : 0}%'),
-          if (_lastResult != null && _lastResult!.face != null) ...[
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Detection Results',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
             const SizedBox(height: 4),
-            Text('Landmarks: ${_lastResult!.face!.landmarks.length}'),
-            Text('Blendshapes: ${_lastResult!.face!.blendshapes.length}'),
-            Text('Smile: ${(_lastResult!.face!.smileScore * 100).toInt()}%'),
-            Text('Eye Contact: ${(_lastResult!.face!.eyeContactScore * 100).toInt()}%'),
+            Text('Frames: $_frameCount | Processed: $_processedFrames | Detected: $_detectedFrames'),
+            Text('FPS: ${_fps.toStringAsFixed(1)} | Skip: ${_frameCount > 0 ? (100 * (_frameCount - _processedFrames) / _frameCount).toStringAsFixed(1) : 0}%'),
+            
+            // Face 결과
+            if (_lastResult?.face != null) ...[
+              const Divider(),
+              Text('🙂 Face: ${_lastResult!.face!.landmarks.length} landmarks, ${_lastResult!.face!.blendshapes.length} blendshapes'),
+              Text('   Smile: ${(_lastResult!.face!.smileScore * 100).toInt()}% | Eye Contact: ${(_lastResult!.face!.eyeContactScore * 100).toInt()}%'),
+            ],
+            
+            // Pose 결과
+            if (_lastResult?.pose != null) ...[
+              const Divider(),
+              Text('🏃 Pose: ${_lastResult!.pose!.landmarks.length} landmarks'),
+              _buildPoseInfo(_lastResult!.pose!),
+            ],
           ],
-        ],
+        ),
       ),
+    );
+  }
+  
+  Widget _buildPoseInfo(PoseResult pose) {
+    // 수동으로 계산 (패키지 extension 대신)
+    double shoulderSymmetry = 0.0;
+    bool tensed = false;
+    bool leftHandVisible = false;
+    bool rightHandVisible = false;
+    
+    if (pose.landmarks.length >= 13) {
+      final leftY = pose.landmarks[11].y;  // leftShoulder
+      final rightY = pose.landmarks[12].y; // rightShoulder
+      final yDiff = (leftY - rightY).abs();
+      shoulderSymmetry = (1.0 - yDiff * 5).clamp(0.0, 1.0);
+    }
+    
+    if (pose.landmarks.length >= 13) {
+      final leftEarY = pose.landmarks[7].y;
+      final leftShoulderY = pose.landmarks[11].y;
+      final rightEarY = pose.landmarks[8].y;
+      final rightShoulderY = pose.landmarks[12].y;
+      final avgDist = ((leftShoulderY - leftEarY) + (rightShoulderY - rightEarY)) / 2;
+      tensed = avgDist < 0.1;
+    }
+    
+    if (pose.landmarks.length >= 16) {
+      leftHandVisible = (pose.landmarks[15].visibility ?? 0) > 0.5;
+    }
+    if (pose.landmarks.length >= 17) {
+      rightHandVisible = (pose.landmarks[16].visibility ?? 0) > 0.5;
+    }
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('   Shoulder Symmetry: ${(shoulderSymmetry * 100).toInt()}%'),
+        Text('   Tensed: ${tensed ? "Yes" : "No"} | Hands: L=${leftHandVisible ? "✓" : "✗"} R=${rightHandVisible ? "✓" : "✗"}'),
+      ],
     );
   }
 

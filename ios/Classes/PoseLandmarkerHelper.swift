@@ -1,12 +1,12 @@
 import Foundation
-import UIKit
 import MediaPipeTasksVision
+import UIKit
 
 /**
  * Pose Landmarker Helper
- * MediaPipe Pose Landmarker 래퍼 클래스
+ * MediaPipe Pose Landmarker 래퍼 클래스 (iOS)
  *
- * 33개 몸 랜드마크 (visibility + presence) 지원
+ * 33개 신체 랜드마크 감지
  */
 class PoseLandmarkerHelper {
     
@@ -15,130 +15,183 @@ class PoseLandmarkerHelper {
     private let numPoses: Int
     private let minDetectionConfidence: Float
     private let minTrackingConfidence: Float
+    private let minPosePresenceConfidence: Float
+    private let runningMode: RunningMode
     
     init(
         numPoses: Int = 1,
         minDetectionConfidence: Float = 0.5,
-        minTrackingConfidence: Float = 0.5
+        minTrackingConfidence: Float = 0.5,
+        minPosePresenceConfidence: Float = 0.5,
+        runningMode: RunningMode = .video
     ) throws {
         self.numPoses = numPoses
         self.minDetectionConfidence = minDetectionConfidence
         self.minTrackingConfidence = minTrackingConfidence
+        self.minPosePresenceConfidence = minPosePresenceConfidence
+        self.runningMode = runningMode
         
         try setupPoseLandmarker()
     }
     
     private func setupPoseLandmarker() throws {
-        // 모델 파일 경로 찾기
-        guard let modelPath = Bundle.main.path(forResource: "pose_landmarker_lite", ofType: "task") else {
-            // 플러그인 번들에서 찾기
-            let bundle = Bundle(for: type(of: self))
-            guard let path = bundle.path(forResource: "pose_landmarker_lite", ofType: "task") else {
-                throw NSError(domain: "PoseLandmarkerHelper", code: -1,
-                    userInfo: [NSLocalizedDescriptionKey: "Model file not found: pose_landmarker_lite.task"])
+        // 모델 파일 찾기 (Bundle에서)
+        guard let modelPath = Bundle.main.path(
+            forResource: "pose_landmarker_lite",
+            ofType: "task"
+        ) else {
+            // Frameworks에서 찾기
+            let frameworkBundle = Bundle(for: PoseLandmarkerHelper.self)
+            guard let frameworkModelPath = frameworkBundle.path(
+                forResource: "pose_landmarker_lite",
+                ofType: "task"
+            ) else {
+                throw NSError(
+                    domain: "PoseLandmarkerHelper",
+                    code: -1,
+                    userInfo: [NSLocalizedDescriptionKey: "pose_landmarker_lite.task not found in bundle"]
+                )
             }
-            try initializeLandmarker(modelPath: path)
+            try createLandmarker(modelPath: frameworkModelPath)
             return
         }
-        try initializeLandmarker(modelPath: modelPath)
+        
+        try createLandmarker(modelPath: modelPath)
     }
     
-    private func initializeLandmarker(modelPath: String) throws {
+    private func createLandmarker(modelPath: String) throws {
+        let baseOptions = BaseOptions()
+        baseOptions.modelAssetPath = modelPath
+        
         let options = PoseLandmarkerOptions()
-        options.baseOptions.modelAssetPath = modelPath
-        options.runningMode = .image
+        options.baseOptions = baseOptions
         options.numPoses = numPoses
         options.minPoseDetectionConfidence = minDetectionConfidence
-        options.minPosePresenceConfidence = minDetectionConfidence
         options.minTrackingConfidence = minTrackingConfidence
+        options.minPosePresenceConfidence = minPosePresenceConfidence
+        options.runningMode = runningMode
+        // Note: outputSegmentationMasks는 iOS SDK에서 지원 안함
         
         poseLandmarker = try PoseLandmarker(options: options)
+        
+        print("[PoseLandmarkerHelper] Initialized successfully")
     }
     
     /**
-     * 이미지에서 포즈 감지
-     * @param image 입력 이미지
-     * @return 감지 결과 Dictionary (Flutter로 전송용)
+     * UIImage에서 포즈 감지
      */
-    func detect(image: UIImage) -> [String: Any]? {
-        guard let landmarker = poseLandmarker else { return nil }
+    func detect(image: UIImage) -> [String: Any?]? {
+        guard let landmarker = poseLandmarker else {
+            print("[PoseLandmarkerHelper] Landmarker not initialized")
+            return nil
+        }
         
         guard let mpImage = try? MPImage(uiImage: image) else {
+            print("[PoseLandmarkerHelper] Failed to create MPImage from UIImage")
             return nil
         }
         
         do {
-            let result = try landmarker.detect(image: mpImage)
-            return convertResultToDict(result: result)
+            let result: PoseLandmarkerResult
+            
+            switch runningMode {
+            case .video:
+                let timestampMs = Int(Date().timeIntervalSince1970 * 1000)
+                result = try landmarker.detect(videoFrame: mpImage, timestampInMilliseconds: timestampMs)
+            case .image:
+                result = try landmarker.detect(image: mpImage)
+            default:
+                return nil
+            }
+            
+            return convertResultToMap(result: result)
         } catch {
-            print("Pose detection error: \(error)")
+            print("[PoseLandmarkerHelper] Detection failed: \(error)")
             return nil
         }
     }
     
     /**
-     * PoseLandmarkerResult를 Flutter 전송용 Dictionary로 변환
+     * CVPixelBuffer에서 포즈 감지 (카메라 프레임용)
      */
-    private func convertResultToDict(result: PoseLandmarkerResult) -> [String: Any]? {
+    func detect(pixelBuffer: CVPixelBuffer, orientation: UIImage.Orientation = .up) -> [String: Any?]? {
+        guard let landmarker = poseLandmarker else {
+            print("[PoseLandmarkerHelper] Landmarker not initialized")
+            return nil
+        }
+        
+        guard let mpImage = try? MPImage(pixelBuffer: pixelBuffer, orientation: orientation) else {
+            print("[PoseLandmarkerHelper] Failed to create MPImage from CVPixelBuffer")
+            return nil
+        }
+        
+        do {
+            let result: PoseLandmarkerResult
+            
+            switch runningMode {
+            case .video:
+                let timestampMs = Int(Date().timeIntervalSince1970 * 1000)
+                result = try landmarker.detect(videoFrame: mpImage, timestampInMilliseconds: timestampMs)
+            case .image:
+                result = try landmarker.detect(image: mpImage)
+            default:
+                return nil
+            }
+            
+            return convertResultToMap(result: result)
+        } catch {
+            print("[PoseLandmarkerHelper] Detection failed: \(error)")
+            return nil
+        }
+    }
+    
+    /**
+     * PoseLandmarkerResult를 Flutter 전달용 Dictionary로 변환
+     */
+    private func convertResultToMap(result: PoseLandmarkerResult) -> [String: Any?]? {
         guard !result.landmarks.isEmpty else {
             return nil
         }
         
-        // 첫 번째 포즈만 처리
-        let poseLandmarks = result.landmarks[0]
+        // 첫 번째 포즈만 사용
+        let landmarks = result.landmarks[0]
+        let worldLandmarks = result.worldLandmarks.isEmpty ? nil : result.worldLandmarks[0]
         
-        // 정규화된 랜드마크 (33개)
-        var landmarks: [[String: Any]] = []
-        for (index, landmark) in poseLandmarks.enumerated() {
-            var landmarkDict: [String: Any] = [
+        print("[PoseLandmarkerHelper] Pose detected! landmarks=\(landmarks.count)")
+        
+        // Normalized landmarks (0.0~1.0)
+        var landmarksList: [[String: Any]] = []
+        for (index, landmark) in landmarks.enumerated() {
+            landmarksList.append([
                 "index": index,
                 "x": landmark.x,
                 "y": landmark.y,
-                "z": landmark.z
-            ]
-            
-            // visibility와 presence 추가
-            if let visibility = landmark.visibility?.floatValue {
-                landmarkDict["visibility"] = Double(visibility)
-            }
-            if let presence = landmark.presence?.floatValue {
-                landmarkDict["presence"] = Double(presence)
-            }
-            
-            landmarks.append(landmarkDict)
+                "z": landmark.z,
+                "visibility": landmark.visibility?.floatValue ?? 0.0,
+                "presence": landmark.presence?.floatValue ?? 0.0
+            ])
         }
         
-        var resultDict: [String: Any] = [
-            "landmarks": landmarks
-        ]
-        
-        // 월드 랜드마크 (실제 3D 좌표, 미터 단위)
-        if !result.worldLandmarks.isEmpty {
-            let worldLandmarksList = result.worldLandmarks[0]
-            var worldLandmarks: [[String: Any]] = []
-            
-            for (index, landmark) in worldLandmarksList.enumerated() {
-                var landmarkDict: [String: Any] = [
+        // World landmarks (미터 단위)
+        var worldLandmarksList: [[String: Any]]? = nil
+        if let worldLandmarks = worldLandmarks {
+            worldLandmarksList = []
+            for (index, landmark) in worldLandmarks.enumerated() {
+                worldLandmarksList?.append([
                     "index": index,
                     "x": landmark.x,
                     "y": landmark.y,
-                    "z": landmark.z
-                ]
-                
-                if let visibility = landmark.visibility?.floatValue {
-                    landmarkDict["visibility"] = Double(visibility)
-                }
-                if let presence = landmark.presence?.floatValue {
-                    landmarkDict["presence"] = Double(presence)
-                }
-                
-                worldLandmarks.append(landmarkDict)
+                    "z": landmark.z,
+                    "visibility": landmark.visibility?.floatValue ?? 0.0,
+                    "presence": landmark.presence?.floatValue ?? 0.0
+                ])
             }
-            
-            resultDict["worldLandmarks"] = worldLandmarks
         }
         
-        return resultDict
+        return [
+            "landmarks": landmarksList,
+            "worldLandmarks": worldLandmarksList as Any
+        ]
     }
     
     /**
@@ -146,5 +199,6 @@ class PoseLandmarkerHelper {
      */
     func close() {
         poseLandmarker = nil
+        print("[PoseLandmarkerHelper] Closed")
     }
 }
