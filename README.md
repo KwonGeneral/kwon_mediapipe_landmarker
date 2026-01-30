@@ -26,7 +26,7 @@ Add to your `pubspec.yaml`:
 dependencies:
   kwon_mediapipe_landmarker:
     git:
-      url: https://github.com/your-username/kwon_mediapipe_landmarker.git
+      url: https://github.com/실제아이디/kwon_mediapipe_landmarker.git
 ```
 
 ## Usage
