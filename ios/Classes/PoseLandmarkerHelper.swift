@@ -145,49 +145,80 @@ class PoseLandmarkerHelper {
         }
     }
     
+    // Left/Right 랜드마크 인덱스 스왑 맵 (iOS 전면 카메라 미러링 보정용)
+    // MediaPipe Pose 랜드마크: 0=nose, 1-6=eyes, 7-8=ears, 9-10=mouth, 11-22=upper body, 23-32=lower body
+    private static let leftRightSwapMap: [Int: Int] = [
+        1: 4, 4: 1,   // leftEyeInner <-> rightEyeInner
+        2: 5, 5: 2,   // leftEye <-> rightEye
+        3: 6, 6: 3,   // leftEyeOuter <-> rightEyeOuter
+        7: 8, 8: 7,   // leftEar <-> rightEar
+        9: 10, 10: 9, // mouthLeft <-> mouthRight
+        11: 12, 12: 11, // leftShoulder <-> rightShoulder
+        13: 14, 14: 13, // leftElbow <-> rightElbow
+        15: 16, 16: 15, // leftWrist <-> rightWrist
+        17: 18, 18: 17, // leftPinky <-> rightPinky
+        19: 20, 20: 19, // leftIndex <-> rightIndex
+        21: 22, 22: 21, // leftThumb <-> rightThumb
+        23: 24, 24: 23, // leftHip <-> rightHip
+        25: 26, 26: 25, // leftKnee <-> rightKnee
+        27: 28, 28: 27, // leftAnkle <-> rightAnkle
+        29: 30, 30: 29, // leftHeel <-> rightHeel
+        31: 32, 32: 31  // leftFootIndex <-> rightFootIndex
+    ]
+
     /**
      * PoseLandmarkerResult를 Flutter 전달용 Dictionary로 변환
+     *
+     * Note: iOS 전면 카메라는 미러링되어 있으므로:
+     * 1. X 좌표를 반전 (1.0 - x)
+     * 2. Left/Right 랜드마크 인덱스를 스왑
+     * 이렇게 해야 Android와 동일하게 오른손을 들면 오른손으로 인식됨
      */
     private func convertResultToMap(result: PoseLandmarkerResult) -> [String: Any?]? {
         guard !result.landmarks.isEmpty else {
             return nil
         }
-        
+
         // 첫 번째 포즈만 사용
         let landmarks = result.landmarks[0]
         let worldLandmarks = result.worldLandmarks.isEmpty ? nil : result.worldLandmarks[0]
-        
+
         print("[PoseLandmarkerHelper] Pose detected! landmarks=\(landmarks.count)")
-        
+
         // Normalized landmarks (0.0~1.0)
-        var landmarksList: [[String: Any]] = []
-        for (index, landmark) in landmarks.enumerated() {
-            landmarksList.append([
-                "index": index,
-                "x": landmark.x,
+        // iOS 전면 카메라 미러링 보정: X 좌표 반전 + Left/Right 인덱스 스왑
+        var landmarksList: [[String: Any]] = Array(repeating: [:], count: landmarks.count)
+        for (originalIndex, landmark) in landmarks.enumerated() {
+            // Left/Right 스왑된 인덱스 결정
+            let targetIndex = Self.leftRightSwapMap[originalIndex] ?? originalIndex
+            landmarksList[targetIndex] = [
+                "index": targetIndex,
+                "x": 1.0 - landmark.x,  // 미러링 보정
                 "y": landmark.y,
                 "z": landmark.z,
                 "visibility": landmark.visibility?.floatValue ?? 0.0,
                 "presence": landmark.presence?.floatValue ?? 0.0
-            ])
+            ]
         }
-        
+
         // World landmarks (미터 단위)
+        // World landmarks도 동일하게 처리
         var worldLandmarksList: [[String: Any]]? = nil
         if let worldLandmarks = worldLandmarks {
-            worldLandmarksList = []
-            for (index, landmark) in worldLandmarks.enumerated() {
-                worldLandmarksList?.append([
-                    "index": index,
-                    "x": landmark.x,
+            worldLandmarksList = Array(repeating: [:], count: worldLandmarks.count)
+            for (originalIndex, landmark) in worldLandmarks.enumerated() {
+                let targetIndex = Self.leftRightSwapMap[originalIndex] ?? originalIndex
+                worldLandmarksList?[targetIndex] = [
+                    "index": targetIndex,
+                    "x": -landmark.x,  // World 좌표는 부호 반전
                     "y": landmark.y,
                     "z": landmark.z,
                     "visibility": landmark.visibility?.floatValue ?? 0.0,
                     "presence": landmark.presence?.floatValue ?? 0.0
-                ])
+                ]
             }
         }
-        
+
         return [
             "landmarks": landmarksList,
             "worldLandmarks": worldLandmarksList as Any

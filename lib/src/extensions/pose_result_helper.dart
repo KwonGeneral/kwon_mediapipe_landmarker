@@ -26,8 +26,9 @@ extension PoseResultHelper on PoseResult {
     final rightEar = landmarks[PoseLandmarkIndex.rightEar];
     final rightShoulder = landmarks[PoseLandmarkIndex.rightShoulder];
 
-    final leftDist = leftShoulder.y - leftEar.y;
-    final rightDist = rightShoulder.y - rightEar.y;
+    // 절대값 사용 (iOS/Android 좌표계 차이 대응)
+    final leftDist = (leftShoulder.y - leftEar.y).abs();
+    final rightDist = (rightShoulder.y - rightEar.y).abs();
     final avgDist = (leftDist + rightDist) / 2;
 
     return avgDist < 0.1; // 귀-어깨 거리가 너무 가까우면 움츠림

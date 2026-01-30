@@ -168,6 +168,32 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     }
   }
 
+  /// Handle LandmarkerException with appropriate error messages
+  void _handleLandmarkerError(LandmarkerException e) {
+    switch (e.error) {
+      case LandmarkerError.notInitialized:
+        _addLog('ERROR: Landmarker not initialized');
+        break;
+      case LandmarkerError.modelLoadFailed:
+        _addLog('ERROR: Model load failed - check if model files exist');
+        break;
+      case LandmarkerError.invalidImage:
+        _addLog('ERROR: Invalid image format');
+        break;
+      case LandmarkerError.detectionFailed:
+        _addLog('ERROR: Detection failed');
+        break;
+      case LandmarkerError.cameraPermissionDenied:
+        _addLog('ERROR: Camera permission denied');
+        break;
+      case LandmarkerError.initializationFailed:
+        _addLog('ERROR: Initialization failed - ${e.message}');
+        break;
+      default:
+        _addLog('ERROR: ${e.code} - ${e.message}');
+    }
+  }
+
   Future<void> _initializeAll() async {
     _addLog('Starting initialization...');
     
@@ -205,8 +231,11 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
         );
         _isMediaPipeReady = true;
         _addLog('MediaPipe initialized: true');
+      } on LandmarkerException catch (e) {
+        _handleLandmarkerError(e);
+        return;
       } catch (e) {
-        _addLog('ERROR: MediaPipe init failed: $e');
+        _addLog('ERROR: Unexpected error: $e');
         return;
       }
     }
@@ -377,6 +406,10 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
           setState(() {});
         }
       }
+    } on LandmarkerException catch (e) {
+      if (_processedFrames % 30 == 1 && !_isDisposed) {
+        _handleLandmarkerError(e);
+      }
     } catch (e) {
       if (_processedFrames % 30 == 1 && !_isDisposed) {
         _addLog('Detection error: $e');
@@ -533,35 +566,44 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     bool tensed = false;
     bool leftHandVisible = false;
     bool rightHandVisible = false;
-    
+    double avgDist = 0.0;
+
     if (pose.landmarks.length >= 13) {
       final leftY = pose.landmarks[11].y;  // leftShoulder
       final rightY = pose.landmarks[12].y; // rightShoulder
       final yDiff = (leftY - rightY).abs();
       shoulderSymmetry = (1.0 - yDiff * 5).clamp(0.0, 1.0);
     }
-    
+
     if (pose.landmarks.length >= 13) {
       final leftEarY = pose.landmarks[7].y;
       final leftShoulderY = pose.landmarks[11].y;
       final rightEarY = pose.landmarks[8].y;
       final rightShoulderY = pose.landmarks[12].y;
-      final avgDist = ((leftShoulderY - leftEarY) + (rightShoulderY - rightEarY)) / 2;
+      // 절대값 사용 (iOS/Android 좌표계 차이 대응)
+      avgDist = ((leftShoulderY - leftEarY).abs() + (rightShoulderY - rightEarY).abs()) / 2;
       tensed = avgDist < 0.1;
+
+      // Debug: 30프레임마다 좌표 로그 출력
+      if (_detectedFrames % 30 == 1) {
+        debugPrint('[POSE DEBUG] leftEar.y=${leftEarY.toStringAsFixed(3)}, leftShoulder.y=${leftShoulderY.toStringAsFixed(3)}');
+        debugPrint('[POSE DEBUG] rightEar.y=${rightEarY.toStringAsFixed(3)}, rightShoulder.y=${rightShoulderY.toStringAsFixed(3)}');
+        debugPrint('[POSE DEBUG] avgDist=${avgDist.toStringAsFixed(3)}, tensed=$tensed');
+      }
     }
-    
+
     if (pose.landmarks.length >= 16) {
       leftHandVisible = (pose.landmarks[15].visibility ?? 0) > 0.5;
     }
     if (pose.landmarks.length >= 17) {
       rightHandVisible = (pose.landmarks[16].visibility ?? 0) > 0.5;
     }
-    
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text('   Shoulder Symmetry: ${(shoulderSymmetry * 100).toInt()}%'),
-        Text('   Tensed: ${tensed ? "Yes" : "No"} | Hands: L=${leftHandVisible ? "✓" : "✗"} R=${rightHandVisible ? "✓" : "✗"}'),
+        Text('   Tensed: ${tensed ? "Yes" : "No"} (dist: ${avgDist.toStringAsFixed(2)}) | Hands: L=${leftHandVisible ? "✓" : "✗"} R=${rightHandVisible ? "✓" : "✗"}'),
       ],
     );
   }

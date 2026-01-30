@@ -5,26 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.0.1] - 2026-01-31
 
 ### Added
-- Initial project setup
-- Dart API structure
-- Face Landmarker support (478 landmarks, 52 blendshapes)
-- Pose Landmarker support (33 landmarks)
-- Helper extensions for face metrics (eyeContactScore, smileScore, tensionScore)
-- Helper extensions for pose metrics (shoulderSymmetryScore, postureScore)
-
-### TODO
-- [ ] Android native implementation
-- [ ] iOS native implementation
-- [ ] Camera stream processing
-- [ ] Example app
-- [ ] Performance optimization
-- [ ] pub.dev release
-
-## [0.0.1] - 2025-01-31
-
-### Added
-- Project initialization
-- Dart API skeleton
+- **Face Landmarker** support
+  - 478 facial landmarks detection
+  - 52 ARKit-compatible blendshapes
+  - Optional 4x4 transformation matrix output
+- **Pose Landmarker** support
+  - 33 body pose landmarks
+  - World landmarks (meter units)
+  - Visibility and presence scores
+- **Real-time camera analysis**
+  - Optimized YUV-to-RGB conversion (Android: parallel processing, iOS: vImage)
+  - VIDEO mode for tracking optimization
+- **Helper extensions**
+  - FaceResultHelper: 14 methods (eyeContactScore, smileScore, tensionScore, etc.)
+  - PoseResultHelper: 19 methods (postureScore, shoulderSymmetryScore, etc.)
+- **Structured error handling**
+  - LandmarkerError enum with 11 error codes
+  - LandmarkerException class with detailed error information
+- **Platform support**
+  - Android (minSdk 24, MediaPipe Tasks Vision)
+  - iOS (iOS 12.0+, MediaPipe Tasks Vision)
+- **iOS front camera mirroring correction**
+  - X coordinate inversion
+  - Left/Right landmark index swap for accurate detection
+- Example app with Face + Pose simultaneous detection

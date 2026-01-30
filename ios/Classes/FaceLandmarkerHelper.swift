@@ -94,42 +94,62 @@ class FaceLandmarkerHelper {
     
     /**
      * FaceLandmarkerResult를 Flutter 전송용 Dictionary로 변환
+     *
+     * Note: iOS 전면 카메라는 미러링되어 있으므로 X 좌표를 반전시킴 (1.0 - x)
+     * 이렇게 해야 Android와 동일하게 좌우가 맞음
      */
     private func convertResultToDict(result: FaceLandmarkerResult) -> [String: Any]? {
         guard !result.faceLandmarks.isEmpty else {
             return nil
         }
-        
+
         // 첫 번째 얼굴만 처리
         let faceLandmarks = result.faceLandmarks[0]
-        
+
         // 랜드마크 변환 (478개)
+        // iOS 전면 카메라 미러링 보정: X 좌표 반전
         var landmarks: [[String: Any]] = []
         for (index, landmark) in faceLandmarks.enumerated() {
             landmarks.append([
                 "index": index,
-                "x": landmark.x,
+                "x": 1.0 - landmark.x,  // 미러링 보정
                 "y": landmark.y,
                 "z": landmark.z
             ])
         }
-        
+
         // 블렌드쉐입 변환 (52개)
+        // 블렌드쉐입은 좌우 이름이 있으므로 Left/Right swap 필요
         var blendshapes: [String: Double] = [:]
         if outputBlendshapes, !result.faceBlendshapes.isEmpty {
             let faceBlendshapes = result.faceBlendshapes[0]
             for i in 0..<faceBlendshapes.categories.count {
                 let category = faceBlendshapes.categories[i]
                 if let name = category.categoryName {
-                    blendshapes[name] = Double(category.score)
+                    // Left/Right 스왑하여 저장
+                    let swappedName = swapLeftRight(name)
+                    blendshapes[swappedName] = Double(category.score)
                 }
             }
         }
-        
+
         return [
             "landmarks": landmarks,
             "blendshapes": blendshapes
         ]
+    }
+
+    /**
+     * 블렌드쉐입 이름의 Left/Right를 스왑
+     * 미러링 보정을 위해 필요
+     */
+    private func swapLeftRight(_ name: String) -> String {
+        if name.contains("Left") {
+            return name.replacingOccurrences(of: "Left", with: "Right")
+        } else if name.contains("Right") {
+            return name.replacingOccurrences(of: "Right", with: "Left")
+        }
+        return name
     }
     
     /**

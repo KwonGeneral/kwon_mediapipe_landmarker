@@ -7,6 +7,9 @@ library kwon_mediapipe_landmarker;
 // 메인 클래스
 export 'src/landmarker.dart';
 
+// 예외 클래스
+export 'src/exceptions.dart';
+
 // 설정 클래스
 export 'src/options.dart';
 

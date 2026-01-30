@@ -1,8 +1,8 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 
+import 'exceptions.dart';
 import 'options.dart';
 import 'result.dart';
 import 'platform/platform_channel.dart';
@@ -66,15 +66,17 @@ class KwonMediapipeLandmarker {
     PoseOptions? poseOptions,
   }) async {
     if (_isInitialized) {
-      throw StateError(
-        'KwonMediapipeLandmarker is already initialized. '
-        'Call dispose() first before reinitializing.',
+      throw const LandmarkerException(
+        error: LandmarkerError.initializationFailed,
+        message: 'KwonMediapipeLandmarker is already initialized. '
+            'Call dispose() first before reinitializing.',
       );
     }
 
     if (!face && !pose) {
-      throw ArgumentError(
-        'At least one of face or pose must be enabled.',
+      throw const LandmarkerException(
+        error: LandmarkerError.invalidArguments,
+        message: 'At least one of face or pose must be enabled.',
       );
     }
 
@@ -108,9 +110,10 @@ class KwonMediapipeLandmarker {
       _faceEnabled = face;
       _poseEnabled = pose;
     } on PlatformException catch (e) {
-      throw LandmarkerException(
+      throw LandmarkerException.fromCode(
+        e.code,
         'Failed to initialize landmarker: ${e.message}',
-        code: e.code,
+        originalError: e,
       );
     }
   }
@@ -146,9 +149,10 @@ class KwonMediapipeLandmarker {
 
       return LandmarkerResult.fromMap(Map<String, dynamic>.from(result));
     } on PlatformException catch (e) {
-      throw LandmarkerException(
+      throw LandmarkerException.fromCode(
+        e.code,
         'Detection failed: ${e.message}',
-        code: e.code,
+        originalError: e,
       );
     }
   }
@@ -201,9 +205,10 @@ class KwonMediapipeLandmarker {
 
       return LandmarkerResult.fromMap(Map<String, dynamic>.from(result));
     } on PlatformException catch (e) {
-      throw LandmarkerException(
+      throw LandmarkerException.fromCode(
+        e.code,
         'Camera detection failed: ${e.message}',
-        code: e.code,
+        originalError: e,
       );
     }
   }
@@ -239,7 +244,11 @@ class KwonMediapipeLandmarker {
       },
       onError: (dynamic error) {
         _resultStreamController?.addError(
-          LandmarkerException('Stream error: $error'),
+          LandmarkerException(
+            error: LandmarkerError.detectionFailed,
+            message: 'Stream error: $error',
+            originalError: error,
+          ),
         );
       },
     );
@@ -286,9 +295,10 @@ class KwonMediapipeLandmarker {
   /// 초기화 상태 확인
   static void _checkInitialized() {
     if (!_isInitialized) {
-      throw StateError(
-        'KwonMediapipeLandmarker is not initialized. '
-        'Call initialize() first.',
+      throw const LandmarkerException(
+        error: LandmarkerError.notInitialized,
+        message: 'KwonMediapipeLandmarker is not initialized. '
+            'Call initialize() first.',
       );
     }
   }
@@ -299,24 +309,5 @@ class KwonMediapipeLandmarker {
     _streamSubscription = null;
     _resultStreamController?.close();
     _resultStreamController = null;
-  }
-}
-
-/// Landmarker 예외
-class LandmarkerException implements Exception {
-  /// 에러 메시지
-  final String message;
-
-  /// 에러 코드 (선택적)
-  final String? code;
-
-  const LandmarkerException(this.message, {this.code});
-
-  @override
-  String toString() {
-    if (code != null) {
-      return 'LandmarkerException($code): $message';
-    }
-    return 'LandmarkerException: $message';
   }
 }

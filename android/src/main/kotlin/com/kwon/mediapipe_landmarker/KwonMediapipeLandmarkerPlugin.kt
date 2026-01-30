@@ -26,6 +26,16 @@ class KwonMediapipeLandmarkerPlugin : FlutterPlugin, MethodCallHandler, EventCha
         private const val TAG = "MediaPipeLandmarker"
         // 병렬 처리용 스레드 풀 (CPU 코어 수에 맞춤)
         private val executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors())
+
+        // Error codes (matching Dart LandmarkerError enum)
+        private const val ERROR_NOT_INITIALIZED = "NOT_INITIALIZED"
+        private const val ERROR_MODEL_LOAD_FAILED = "MODEL_LOAD_FAILED"
+        private const val ERROR_INVALID_IMAGE = "INVALID_IMAGE"
+        private const val ERROR_DETECTION_FAILED = "DETECTION_FAILED"
+        private const val ERROR_INITIALIZATION_FAILED = "INITIALIZATION_FAILED"
+        private const val ERROR_DISPOSE_FAILED = "DISPOSE_FAILED"
+        private const val ERROR_INVALID_ARGUMENTS = "INVALID_ARGUMENTS"
+        private const val ERROR_NO_CONTEXT = "NO_CONTEXT"
     }
 
     private lateinit var methodChannel: MethodChannel
@@ -69,7 +79,7 @@ class KwonMediapipeLandmarkerPlugin : FlutterPlugin, MethodCallHandler, EventCha
     private fun handleInitialize(call: MethodCall, result: Result) {
         val ctx = context
         if (ctx == null) {
-            result.error("NO_CONTEXT", "Application context is not available", null)
+            result.error(ERROR_NO_CONTEXT, "Application context is not available", null)
             return
         }
 
@@ -117,13 +127,13 @@ class KwonMediapipeLandmarkerPlugin : FlutterPlugin, MethodCallHandler, EventCha
             result.success(null)
         } catch (e: Exception) {
             Log.e(TAG, "Initialization failed", e)
-            result.error("INITIALIZATION_FAILED", e.message, e.stackTraceToString())
+            result.error(ERROR_INITIALIZATION_FAILED, e.message, e.stackTraceToString())
         }
     }
 
     private fun handleDetect(call: MethodCall, result: Result) {
         if (!isInitialized) {
-            result.error("NOT_INITIALIZED", "Landmarker is not initialized", null)
+            result.error(ERROR_NOT_INITIALIZED, "Landmarker is not initialized. Call initialize() first.", null)
             return
         }
 
@@ -152,7 +162,7 @@ class KwonMediapipeLandmarkerPlugin : FlutterPlugin, MethodCallHandler, EventCha
             val conversionTime = System.currentTimeMillis() - startTime
 
             if (bitmap == null) {
-                result.error("INVALID_IMAGE", "Could not decode image", null)
+                result.error(ERROR_INVALID_IMAGE, "Could not decode image. Check image format and data.", null)
                 return
             }
 
@@ -193,7 +203,7 @@ class KwonMediapipeLandmarkerPlugin : FlutterPlugin, MethodCallHandler, EventCha
             result.success(response)
         } catch (e: Exception) {
             Log.e(TAG, "Detection failed", e)
-            result.error("DETECTION_FAILED", e.message, e.stackTraceToString())
+            result.error(ERROR_DETECTION_FAILED, e.message, e.stackTraceToString())
         }
     }
 
@@ -325,7 +335,8 @@ class KwonMediapipeLandmarkerPlugin : FlutterPlugin, MethodCallHandler, EventCha
             argbBuffer = null
             result.success(null)
         } catch (e: Exception) {
-            result.error("DISPOSE_FAILED", e.message, null)
+            Log.e(TAG, "Dispose failed", e)
+            result.error(ERROR_DISPOSE_FAILED, e.message, e.stackTraceToString())
         }
     }
 

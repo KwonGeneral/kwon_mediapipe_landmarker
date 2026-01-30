@@ -4,16 +4,25 @@ import Accelerate
 import CoreGraphics
 
 public class KwonMediapipeLandmarkerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
-    
+
+    // Error codes (matching Dart LandmarkerError enum)
+    private static let ERROR_NOT_INITIALIZED = "NOT_INITIALIZED"
+    private static let ERROR_MODEL_LOAD_FAILED = "MODEL_LOAD_FAILED"
+    private static let ERROR_INVALID_IMAGE = "INVALID_IMAGE"
+    private static let ERROR_DETECTION_FAILED = "DETECTION_FAILED"
+    private static let ERROR_INITIALIZATION_FAILED = "INITIALIZATION_FAILED"
+    private static let ERROR_DISPOSE_FAILED = "DISPOSE_FAILED"
+    private static let ERROR_INVALID_ARGUMENTS = "INVALID_ARGUMENTS"
+
     private var eventSink: FlutterEventSink?
-    
+
     private var faceLandmarkerHelper: FaceLandmarkerHelper?
     private var poseLandmarkerHelper: PoseLandmarkerHelper?
-    
+
     private var isInitialized = false
     private var faceEnabled = false
     private var poseEnabled = false
-    
+
     // 성능 측정용
     private var frameCount = 0
     
@@ -52,7 +61,7 @@ public class KwonMediapipeLandmarkerPlugin: NSObject, FlutterPlugin, FlutterStre
     
     private func handleInitialize(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         guard let args = call.arguments as? [String: Any] else {
-            result(FlutterError(code: "INVALID_ARGUMENTS", message: "Invalid arguments", details: nil))
+            result(FlutterError(code: Self.ERROR_INVALID_ARGUMENTS, message: "Invalid arguments", details: nil))
             return
         }
         
@@ -93,18 +102,18 @@ public class KwonMediapipeLandmarkerPlugin: NSObject, FlutterPlugin, FlutterStre
             isInitialized = true
             result(nil)
         } catch {
-            result(FlutterError(code: "INITIALIZATION_FAILED", message: error.localizedDescription, details: nil))
+            result(FlutterError(code: Self.ERROR_INITIALIZATION_FAILED, message: error.localizedDescription, details: String(describing: error)))
         }
     }
     
     private func handleDetect(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         guard isInitialized else {
-            result(FlutterError(code: "NOT_INITIALIZED", message: "Landmarker is not initialized", details: nil))
+            result(FlutterError(code: Self.ERROR_NOT_INITIALIZED, message: "Landmarker is not initialized. Call initialize() first.", details: nil))
             return
         }
-        
+
         guard let args = call.arguments as? [String: Any] else {
-            result(FlutterError(code: "INVALID_ARGUMENTS", message: "Invalid arguments", details: nil))
+            result(FlutterError(code: Self.ERROR_INVALID_ARGUMENTS, message: "Invalid arguments", details: nil))
             return
         }
         
@@ -134,7 +143,7 @@ public class KwonMediapipeLandmarkerPlugin: NSObject, FlutterPlugin, FlutterStre
         let conversionTime = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
         
         guard let inputImage = image else {
-            result(FlutterError(code: "INVALID_IMAGE", message: "Could not decode image", details: nil))
+            result(FlutterError(code: Self.ERROR_INVALID_IMAGE, message: "Could not decode image. Check image format and data.", details: nil))
             return
         }
         
