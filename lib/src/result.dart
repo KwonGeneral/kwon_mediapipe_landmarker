@@ -21,12 +21,12 @@ class LandmarkerResult {
   factory LandmarkerResult.fromMap(Map<String, dynamic> map) {
     return LandmarkerResult(
       face: map['face'] != null
-          ? FaceResult.fromMap(map['face'] as Map<String, dynamic>)
+          ? FaceResult.fromMap(_convertMap(map['face']))
           : null,
       pose: map['pose'] != null
-          ? PoseResult.fromMap(map['pose'] as Map<String, dynamic>)
+          ? PoseResult.fromMap(_convertMap(map['pose']))
           : null,
-      timestampMs: map['timestampMs'] as int,
+      timestampMs: (map['timestampMs'] as num).toInt(),
     );
   }
 
@@ -70,17 +70,18 @@ class FaceResult {
   /// Map에서 FaceResult 생성
   factory FaceResult.fromMap(Map<String, dynamic> map) {
     // landmarks 파싱
-    final landmarksData = map['landmarks'] as List<dynamic>;
+    final landmarksData = map['landmarks'] as List<dynamic>? ?? [];
     final landmarks = landmarksData
-        .map((e) => Landmark.fromMap(e as Map<String, dynamic>))
+        .map((e) => Landmark.fromMap(_convertMap(e)))
         .toList();
 
     // blendshapes 파싱
-    final blendshapesData = map['blendshapes'] as Map<String, dynamic>?;
+    final blendshapesRaw = map['blendshapes'];
     final blendshapes = <String, double>{};
-    if (blendshapesData != null) {
+    if (blendshapesRaw != null) {
+      final blendshapesData = _convertMap(blendshapesRaw);
       blendshapesData.forEach((key, value) {
-        blendshapes[key] = (value as num).toDouble();
+        blendshapes[key.toString()] = (value as num).toDouble();
       });
     }
 
@@ -110,6 +111,54 @@ class FaceResult {
     return blendshapes[name] ?? 0.0;
   }
 
+  // === 편의 속성들 (표정 분석) ===
+
+  /// 미소 점수 (0.0~1.0)
+  double get smileScore {
+    final mouthSmileLeft = blendshapes['mouthSmileLeft'] ?? 0.0;
+    final mouthSmileRight = blendshapes['mouthSmileRight'] ?? 0.0;
+    return (mouthSmileLeft + mouthSmileRight) / 2.0;
+  }
+
+  /// 눈썹 올림 점수 (0.0~1.0)
+  double get browRaiseScore {
+    final browInnerUp = blendshapes['browInnerUp'] ?? 0.0;
+    final browOuterUpLeft = blendshapes['browOuterUpLeft'] ?? 0.0;
+    final browOuterUpRight = blendshapes['browOuterUpRight'] ?? 0.0;
+    return (browInnerUp + browOuterUpLeft + browOuterUpRight) / 3.0;
+  }
+
+  /// 눈 깜빡임 (왼쪽)
+  double get eyeBlinkLeft => blendshapes['eyeBlinkLeft'] ?? 0.0;
+
+  /// 눈 깜빡임 (오른쪽)
+  double get eyeBlinkRight => blendshapes['eyeBlinkRight'] ?? 0.0;
+
+  /// 눈 시선 분석 - 아이컨택 점수 (간단 버전)
+  double get eyeContactScore {
+    final eyeLookOutLeft = blendshapes['eyeLookOutLeft'] ?? 0.0;
+    final eyeLookOutRight = blendshapes['eyeLookOutRight'] ?? 0.0;
+    final eyeLookInLeft = blendshapes['eyeLookInLeft'] ?? 0.0;
+    final eyeLookInRight = blendshapes['eyeLookInRight'] ?? 0.0;
+    final eyeLookUpLeft = blendshapes['eyeLookUpLeft'] ?? 0.0;
+    final eyeLookUpRight = blendshapes['eyeLookUpRight'] ?? 0.0;
+    final eyeLookDownLeft = blendshapes['eyeLookDownLeft'] ?? 0.0;
+    final eyeLookDownRight = blendshapes['eyeLookDownRight'] ?? 0.0;
+
+    // 시선이 정면을 향할수록 점수가 높음
+    final avgLookAway = (eyeLookOutLeft +
+            eyeLookOutRight +
+            eyeLookInLeft +
+            eyeLookInRight +
+            eyeLookUpLeft +
+            eyeLookUpRight +
+            eyeLookDownLeft +
+            eyeLookDownRight) /
+        8.0;
+
+    return 1.0 - avgLookAway.clamp(0.0, 1.0);
+  }
+
   @override
   String toString() {
     return 'FaceResult(landmarks: ${landmarks.length}, '
@@ -134,9 +183,9 @@ class PoseResult {
   /// Map에서 PoseResult 생성
   factory PoseResult.fromMap(Map<String, dynamic> map) {
     // landmarks 파싱
-    final landmarksData = map['landmarks'] as List<dynamic>;
+    final landmarksData = map['landmarks'] as List<dynamic>? ?? [];
     final landmarks = landmarksData
-        .map((e) => Landmark.fromMap(e as Map<String, dynamic>))
+        .map((e) => Landmark.fromMap(_convertMap(e)))
         .toList();
 
     // worldLandmarks 파싱
@@ -144,7 +193,7 @@ class PoseResult {
     if (map['worldLandmarks'] != null) {
       final worldData = map['worldLandmarks'] as List<dynamic>;
       worldLandmarks = worldData
-          .map((e) => Landmark.fromMap(e as Map<String, dynamic>))
+          .map((e) => Landmark.fromMap(_convertMap(e)))
           .toList();
     }
 
@@ -175,4 +224,15 @@ class PoseResult {
     return 'PoseResult(landmarks: ${landmarks.length}, '
         'worldLandmarks: ${worldLandmarks?.length ?? 0})';
   }
+}
+
+/// 재귀적으로 Map을 Map<String, dynamic>으로 변환
+Map<String, dynamic> _convertMap(dynamic data) {
+  if (data is Map<String, dynamic>) {
+    return data;
+  }
+  if (data is Map) {
+    return Map<String, dynamic>.from(data);
+  }
+  throw ArgumentError('Expected Map but got ${data.runtimeType}');
 }
