@@ -226,7 +226,7 @@ class PoseResult {
   }
 }
 
-/// 재귀적으로 Map을 Map<String, dynamic>으로 변환
+/// 재귀적으로 Map을 `Map<String, dynamic>`으로 변환
 Map<String, dynamic> _convertMap(dynamic data) {
   if (data is Map<String, dynamic>) {
     return data;
